@@ -189,6 +189,9 @@ public class BuildController {
             }
             if (hit == null) continue;
 
+            // found a placeable spot — stop drifting before we interact
+            pl.setVelocity(0, pl.getVelocity().y, 0);
+
             if (pl.getInventory().count(item) == 0) { supply(mc, item); return; }
 
             int eq = equip(mc, item);
@@ -203,8 +206,27 @@ public class BuildController {
             wait = delayTicks();
             return;
         }
-        pl.sendMessage(Text.literal("[AutoBuilder] Nothing reachable, move closer (" + queue.size() + " left)"), true);
-        wait = 10;
+        // nothing in range — walk toward the closest queued block instead of just waiting
+        BlockPos closest = null;
+        double best = Double.MAX_VALUE;
+        for (var e : queue) {
+            double d = pl.getPos().squaredDistanceTo(Vec3d.ofCenter(e.getKey()));
+            if (d < best) { best = d; closest = e.getKey(); }
+        }
+        if (closest != null) walkToward(pl, closest);
+        wait = 0;
+    }
+
+    /** Nudges the local player horizontally toward a target block each tick (simple auto-walk), jumping over obstacles. */
+    private static void walkToward(net.minecraft.client.network.ClientPlayerEntity pl, BlockPos target) {
+        Vec3d to = Vec3d.ofCenter(target).subtract(pl.getPos());
+        Vec3d flat = new Vec3d(to.x, 0, to.z);
+        if (flat.lengthSquared() < 0.04) { pl.setVelocity(0, pl.getVelocity().y, 0); return; }
+        Vec3d dir = flat.normalize();
+        double speed = 0.19;
+        pl.setVelocity(dir.x * speed, pl.getVelocity().y, dir.z * speed);
+        pl.setYaw((float) Math.toDegrees(Math.atan2(-dir.x, dir.z)));
+        if (pl.horizontalCollision && pl.isOnGround()) pl.jump();
     }
 
     /** Drops one queue entry (used in non-strict mode) and lets the next tick pick up where it left off. */
