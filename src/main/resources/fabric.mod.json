@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "autobuilder",
+  "version": "1.0.0",
+  "name": "AutoBuilder",
+  "description": "Client-side schematic auto builder with shop buying.",
+  "environment": "client",
+  "entrypoints": { "client": ["me.example.autobuilder.AutoBuilderClient"] },
+  "depends": { "fabricloader": ">=0.16.0", "minecraft": "1.21.1", "java": ">=21", "fabric-api": "*" }
+}
