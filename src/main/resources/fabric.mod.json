@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "autobuilder",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "name": "AutoBuilder",
   "description": "Client-side schematic auto builder. Pulls blocks free in singleplayer creative, or buys them from a shop otherwise.",
   "environment": "client",

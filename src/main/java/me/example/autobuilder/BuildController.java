@@ -82,8 +82,10 @@ public class BuildController {
             skippedBlocks = 0;
             startMillis = System.currentTimeMillis();
             state = State.PLACING;
+            String unknownWarn = s.skippedTypes.isEmpty() ? ""
+                    : "  (unrecognized block(s) skipped: " + String.join(", ", s.skippedTypes) + ")";
             msg("Building " + queue.size() + " blocks from " + Config.INSTANCE.schematic
-                    + "  [" + resolvedModeLabel(mc) + "]");
+                    + "  [" + resolvedModeLabel(mc) + "]" + unknownWarn);
         } catch (Exception ex) {
             msg("Could not load schematic: " + ex.getMessage());
         }
