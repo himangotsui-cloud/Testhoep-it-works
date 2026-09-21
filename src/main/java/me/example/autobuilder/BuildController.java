@@ -40,7 +40,27 @@ public class BuildController {
     private static BlockPos pendingPos;
     private static BlockState pendingState;
 
+    // ---------- progress tracking (read by BuildHud) ----------
+    static int totalBlocks, placedBlocks, skippedBlocks;
+    static long startMillis;
+
     public static boolean running() { return state != State.IDLE; }
+
+    /** Resolves AUTO to CREATIVE or SHOP based on the current world. */
+    static boolean useCreative(MinecraftClient mc) {
+        return switch (Config.INSTANCE.mode) {
+            case "CREATIVE" -> true;
+            case "SHOP" -> false;
+            default -> mc.isInSingleplayer() && mc.player != null && mc.player.getAbilities().creativeMode;
+        };
+    }
+
+    /** What AUTO currently resolves to, for display purposes. */
+    static String resolvedModeLabel(MinecraftClient mc) {
+        String m = Config.INSTANCE.mode;
+        if (!"AUTO".equals(m)) return m;
+        return useCreative(mc) ? "AUTO (creative)" : "AUTO (shop)";
+    }
 
     // ---------- start / stop ----------
     public static void start(BlockPos origin) {
@@ -57,8 +77,13 @@ public class BuildController {
             }
             pendingTries = 0;
             wait = 0;
+            totalBlocks = queue.size();
+            placedBlocks = 0;
+            skippedBlocks = 0;
+            startMillis = System.currentTimeMillis();
             state = State.PLACING;
-            msg("Building " + queue.size() + " blocks from " + Config.INSTANCE.schematic);
+            msg("Building " + queue.size() + " blocks from " + Config.INSTANCE.schematic
+                    + "  [" + resolvedModeLabel(mc) + "]");
         } catch (Exception ex) {
             msg("Could not load schematic: " + ex.getMessage());
         }
@@ -66,12 +91,35 @@ public class BuildController {
 
     public static void stop() { halt("Stopped."); }
 
+    /** Human-readable time remaining, or "" if not enough data yet. */
+    static String etaString() {
+        if (placedBlocks <= 0 || totalBlocks <= 0) return "";
+        long elapsed = System.currentTimeMillis() - startMillis;
+        double perBlock = elapsed / (double) placedBlocks;
+        int remaining = Math.max(0, totalBlocks - placedBlocks - skippedBlocks);
+        long etaMs = (long) (perBlock * remaining);
+        long s = etaMs / 1000;
+        return s < 60 ? ("~" + s + "s") : ("~" + (s / 60) + "m" + (s % 60) + "s");
+    }
+
     private static void halt(String reason) {
         MinecraftClient mc = MinecraftClient.getInstance();
         state = State.IDLE;
         status = reason;
         if (mc.player != null && mc.currentScreen instanceof GenericContainerScreen) mc.player.closeHandledScreen();
         msg(reason);
+    }
+
+    private static void finish() {
+        MinecraftClient mc = MinecraftClient.getInstance();
+        state = State.IDLE;
+        String extra = skippedBlocks > 0 ? " (" + skippedBlocks + " skipped)" : "";
+        status = "Build complete!";
+        msg("Build complete! " + placedBlocks + " blocks placed" + extra + ".");
+        if (Config.INSTANCE.soundOnComplete && mc.player != null) {
+            mc.getSoundManager().play(net.minecraft.client.sound.PositionedSoundInstance.master(
+                    net.minecraft.sound.SoundEvents.UI_TOAST_CHALLENGE_COMPLETE, 1.0F));
+        }
     }
 
     private static void msg(String s) {
@@ -102,7 +150,7 @@ public class BuildController {
         if (mc.currentScreen != null) return; // pause while another GUI is open
 
         queue.removeIf(e -> w.getBlockState(e.getKey()) == e.getValue());
-        if (queue.isEmpty()) { halt("Build complete!"); return; }
+        if (queue.isEmpty()) { finish(); return; }
 
         Vec3d eye = pl.getEyePos();
         for (var e : queue) {
@@ -111,11 +159,20 @@ public class BuildController {
             BlockState cur = w.getBlockState(p);
 
             if (!cur.isReplaceable()) {
-                halt("Wrong block at " + p.toShortString() + ": " + cur.getBlock().getName().getString());
+                if (Config.INSTANCE.strictMode) {
+                    halt("Wrong block at " + p.toShortString() + ": " + cur.getBlock().getName().getString()
+                            + "  (turn off Strict mode to skip these instead)");
+                    return;
+                }
+                skip(p, "wrong block at " + p.toShortString());
                 return;
             }
             Item item = want.getBlock().asItem();
-            if (item == Items.AIR) { halt("No item form for " + want); return; }
+            if (item == Items.AIR) {
+                if (Config.INSTANCE.strictMode) { halt("No item form for " + want); return; }
+                skip(p, "no item form for " + want.getBlock().getName().getString());
+                return;
+            }
             if (pl.getBoundingBox().intersects(new Box(p))) continue; // standing in the spot
 
             BlockHitResult hit = null;
@@ -130,22 +187,35 @@ public class BuildController {
             }
             if (hit == null) continue;
 
-            if (pl.getInventory().count(item) == 0) { startShop(mc, item); return; }
+            if (pl.getInventory().count(item) == 0) { supply(mc, item); return; }
 
             int eq = equip(mc, item);
             if (eq == 2) { wait = 3; return; }
-            if (eq == 0) { startShop(mc, item); return; }
+            if (eq == 0) { supply(mc, item); return; }
 
             mc.interactionManager.interactBlock(pl, Hand.MAIN_HAND, hit);
             pl.swingHand(Hand.MAIN_HAND);
             pendingPos = p;
             pendingState = want;
             state = State.VERIFY;
-            wait = 4;
+            wait = delayTicks();
             return;
         }
         pl.sendMessage(Text.literal("[AutoBuilder] Nothing reachable, move closer (" + queue.size() + " left)"), true);
         wait = 10;
+    }
+
+    /** Drops one queue entry (used in non-strict mode) and lets the next tick pick up where it left off. */
+    private static void skip(BlockPos p, String reason) {
+        queue.removeIf(e -> e.getKey().equals(p));
+        skippedBlocks++;
+        status = "Skipped " + reason + " (" + queue.size() + " left)";
+        wait = 1;
+    }
+
+    /** Delay (in ticks) between placement actions. Config.speed 1 (careful) .. 5 (fast). */
+    private static int delayTicks() {
+        return Math.max(1, 6 - Config.INSTANCE.speed);
     }
 
     private static void verify(MinecraftClient mc) {
@@ -153,12 +223,23 @@ public class BuildController {
         if (now == pendingState) {
             queue.removeIf(e -> e.getKey().equals(pendingPos));
             pendingTries = 0;
+            placedBlocks++;
             state = State.PLACING;
-            wait = 1;
+            wait = Math.max(1, delayTicks() / 3);
         } else if (now.getBlock() == pendingState.getBlock()) {
-            halt("State mismatch at " + pendingPos.toShortString() + ": got " + now + ", wanted " + pendingState);
+            if (Config.INSTANCE.strictMode) {
+                halt("State mismatch at " + pendingPos.toShortString() + ": got " + now + ", wanted " + pendingState);
+            } else {
+                skip(pendingPos, "state mismatch at " + pendingPos.toShortString());
+                state = State.PLACING;
+            }
         } else if (++pendingTries >= 3) {
-            halt("Could not place " + pendingState.getBlock().getName().getString() + " at " + pendingPos.toShortString());
+            if (Config.INSTANCE.strictMode) {
+                halt("Could not place " + pendingState.getBlock().getName().getString() + " at " + pendingPos.toShortString());
+            } else {
+                skip(pendingPos, "could not place at " + pendingPos.toShortString());
+                state = State.PLACING;
+            }
         } else {
             state = State.PLACING;
         }
@@ -179,7 +260,25 @@ public class BuildController {
         return 0;
     }
 
-    // ---------- shop ----------
+    // ---------- supply (creative pull or shop buy) ----------
+    /** Decides how to get more of `item` into the hotbar: pull it for free in creative, or open the shop. */
+    private static void supply(MinecraftClient mc, Item item) {
+        if (useCreative(mc)) {
+            supplyCreative(mc, item);
+        } else {
+            startShop(mc, item);
+        }
+    }
+
+    /** Places the item directly into the current hotbar slot via the creative-inventory action (no shop needed). */
+    private static void supplyCreative(MinecraftClient mc, Item item) {
+        int hotbarSlot = mc.player.getInventory().selectedSlot;
+        int screenSlot = 36 + hotbarSlot; // player screen handler: 36-44 are the hotbar
+        mc.interactionManager.clickCreativeStack(new ItemStack(item, item.getMaxCount()), screenSlot);
+        status = "Creative: grabbed " + item.getName().getString() + " (" + queue.size() + " left)";
+        wait = Math.max(1, delayTicks() / 2);
+    }
+
     private static void startShop(MinecraftClient mc, Item item) {
         shopItem = item;
         wantCount = (int) Math.min(576, queue.stream().filter(q -> q.getValue().getBlock().asItem() == item).count());

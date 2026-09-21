@@ -13,6 +13,15 @@ public class Config {
     public int maxPages = 10;
     public double maxPricePerClick = 0; // 0 = no limit
 
+    /** AUTO = creative if singleplayer+creative, else shop. CREATIVE = always pull from creative. SHOP = always buy. */
+    public String mode = "AUTO";
+    /** If false, a wrong/unplaceable block is skipped with a warning instead of stopping the whole build. */
+    public boolean strictMode = true;
+    /** Play a sound when the build finishes. */
+    public boolean soundOnComplete = true;
+    /** 1 (careful/slow) .. 5 (fast). Controls the delay between actions. */
+    public int speed = 3;
+
     private static final Path FILE = FabricLoader.getInstance().getConfigDir().resolve("autobuilder.json");
     public static Config INSTANCE = load();
 
