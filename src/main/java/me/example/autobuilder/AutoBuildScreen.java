@@ -16,6 +16,7 @@ import java.util.List;
 
 public class AutoBuildScreen extends Screen {
     private static final String[] MODES = { "AUTO", "CREATIVE", "SHOP" };
+    private static final int[] ROTATIONS = { 0, 90, 180, 270 };
 
     private final BlockPos origin;
     private boolean settings = false;
@@ -23,7 +24,7 @@ public class AutoBuildScreen extends Screen {
     private List<String> files = List.of();
     private int idx = 0;
 
-    private ButtonWidget modeBtn, strictBtn, soundBtn, speedLabelBtn;
+    private ButtonWidget modeBtn, strictBtn, soundBtn, speedLabelBtn, layerBtn, rotBtn;
 
     public AutoBuildScreen(BlockPos origin) {
         super(Text.literal("AutoBuilder"));
@@ -72,13 +73,27 @@ public class AutoBuildScreen extends Screen {
 
     private void refresh() {
         files = listSchematics();
-        idx = Math.max(0, files.indexOf(Config.INSTANCE.schematic));
+        idx = 0; // always default to the newest file — no manual picking needed for the common case
         if (!files.isEmpty()) Config.INSTANCE.schematic = files.get(idx);
     }
 
     @Override
     protected void init() {
         int cx = width / 2, cy = height / 2;
+
+        if (BuildController.running()) {
+            // a build is active — offer Pause/Resume + Cancel instead of the picker
+            boolean paused = BuildController.paused();
+            addDrawableChild(ButtonWidget.builder(Text.literal(paused ? "Resume" : "Pause"), b -> {
+                if (paused) BuildController.resume(); else BuildController.pause();
+                close();
+            }).dimensions(cx - 75, cy, 72, 20).build());
+            addDrawableChild(ButtonWidget.builder(Text.literal("Cancel"), b -> {
+                BuildController.stop();
+                close();
+            }).dimensions(cx + 3, cy, 72, 20).build());
+            return;
+        }
 
         if (!settings) {
             refresh();
@@ -90,19 +105,19 @@ public class AutoBuildScreen extends Screen {
             addDrawableChild(ButtonWidget.builder(Text.literal("\u27f3"), b -> { refresh(); clearAndInit(); })
                     .dimensions(cx + 60, cy - 52, 20, 20).tooltip(net.minecraft.client.gui.tooltip.Tooltip.of(
                             Text.literal("Rescan schematics folder"))).build());
+            addDrawableChild(ButtonWidget.builder(Text.literal("Materials"), b -> {
+                if (!files.isEmpty()) BuildController.showMaterials(origin, Config.INSTANCE.schematic);
+            }).dimensions(cx - 110, cy - 52, 70, 20).tooltip(net.minecraft.client.gui.tooltip.Tooltip.of(
+                    Text.literal("List what's needed in chat"))).build());
 
-            Text label = Text.literal(BuildController.running() ? "Stop Auto Build" : "Auto Build");
+            Text label = Text.literal("Auto Build");
             addDrawableChild(new RightClickButton(cx - 75, cy, 150, 20, label, b -> {
-                if (BuildController.running()) {
-                    BuildController.stop();
-                } else {
-                    if (files.isEmpty()) {
-                        BuildController.status = "No .schem files in the schematics folder";
-                        return;
-                    }
-                    Config.INSTANCE.save();
-                    BuildController.start(origin);
+                if (files.isEmpty()) {
+                    BuildController.status = "No .schem files in the schematics folder";
+                    return;
                 }
+                Config.INSTANCE.save();
+                BuildController.start(origin);
                 close();
             }, () -> {
                 settings = true;
@@ -149,6 +164,20 @@ public class AutoBuildScreen extends Screen {
                 Config.INSTANCE.speed = Math.min(5, Config.INSTANCE.speed + 1);
                 speedLabelBtn.setMessage(speedText());
             }).dimensions(cx + 80, row, 20, 20).build());
+            row += 24;
+
+            layerBtn = ButtonWidget.builder(layerText(), b -> {
+                Config.INSTANCE.layerByLayer = !Config.INSTANCE.layerByLayer;
+                layerBtn.setMessage(layerText());
+            }).dimensions(cx - 100, row, 96, 20).build();
+            addDrawableChild(layerBtn);
+
+            rotBtn = ButtonWidget.builder(rotText(), b -> {
+                int i = java.util.Arrays.asList(0, 90, 180, 270).indexOf(Config.INSTANCE.rotation);
+                Config.INSTANCE.rotation = ROTATIONS[(i + 1) % ROTATIONS.length];
+                rotBtn.setMessage(rotText());
+            }).dimensions(cx + 4, row, 96, 20).build();
+            addDrawableChild(rotBtn);
             row += 30;
 
             addDrawableChild(ButtonWidget.builder(Text.literal("Save"), b -> {
@@ -177,15 +206,31 @@ public class AutoBuildScreen extends Screen {
         return Text.literal("Speed: " + Config.INSTANCE.speed + "/5");
     }
 
+    private Text layerText() {
+        return Text.literal("Layers: " + (Config.INSTANCE.layerByLayer ? "ON" : "OFF"));
+    }
+
+    private Text rotText() {
+        return Text.literal("Rotate: " + Config.INSTANCE.rotation + "\u00b0");
+    }
+
     @Override
     public void render(DrawContext ctx, int mouseX, int mouseY, float delta) {
         super.render(ctx, mouseX, mouseY, delta);
         int cx = width / 2, cy = height / 2;
+
+        if (BuildController.running()) {
+            ctx.drawCenteredTextWithShadow(textRenderer, Text.literal("AutoBuilder"), cx, cy - 40, 0xFFFFFF);
+            ctx.drawCenteredTextWithShadow(textRenderer, Text.literal(BuildController.status), cx, cy - 20, 0x55FF55);
+            return;
+        }
+
         if (!settings) {
             ctx.drawCenteredTextWithShadow(textRenderer, Text.literal("AutoBuilder"), cx, cy - 74, 0xFFFFFF);
             String name = files.isEmpty() ? "No .schem files found" : files.get(idx) + "  (" + (idx + 1) + "/" + files.size() + ")";
             ctx.drawCenteredTextWithShadow(textRenderer, Text.literal(name), cx, cy - 24, files.isEmpty() ? 0xFF5555 : 0xFFFF55);
-            String modeLine = "Mode: " + BuildController.resolvedModeLabel(MinecraftClient.getInstance());
+            String modeLine = "Mode: " + BuildController.resolvedModeLabel(MinecraftClient.getInstance())
+                    + "   Rotate: " + Config.INSTANCE.rotation + "\u00b0";
             ctx.drawCenteredTextWithShadow(textRenderer,
                     Text.literal("Left-click: start/stop   Right-click: settings"), cx, cy + 26, 0xAAAAAA);
             ctx.drawCenteredTextWithShadow(textRenderer, Text.literal(modeLine), cx, cy + 40, 0x66CCFF);

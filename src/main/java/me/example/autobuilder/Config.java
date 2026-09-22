@@ -21,6 +21,10 @@ public class Config {
     public boolean soundOnComplete = true;
     /** 1 (careful/slow) .. 5 (fast). Controls the delay between actions. */
     public int speed = 3;
+    /** Finish each Y layer (bottom-up) before starting the next, instead of just going for whatever's reachable. */
+    public boolean layerByLayer = true;
+    /** Degrees to rotate the schematic around the origin before building: 0, 90, 180, or 270. */
+    public int rotation = 0;
 
     private static final Path FILE = FabricLoader.getInstance().getConfigDir().resolve("autobuilder.json");
     public static Config INSTANCE = load();
