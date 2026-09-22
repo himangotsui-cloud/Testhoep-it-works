@@ -21,6 +21,8 @@ public class Config {
     public boolean soundOnComplete = true;
     /** 1 (careful/slow) .. 5 (fast). Controls the delay between actions. */
     public int speed = 3;
+    /** If false, the mod only places blocks you're already standing in reach of — it won't walk/fly your character. */
+    public boolean autoMove = true;
     /** Finish each Y layer (bottom-up) before starting the next, instead of just going for whatever's reachable. */
     public boolean layerByLayer = true;
     /** Degrees to rotate the schematic around the origin before building: 0, 90, 180, or 270. */

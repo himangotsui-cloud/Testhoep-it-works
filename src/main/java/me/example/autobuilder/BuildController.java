@@ -344,8 +344,14 @@ public class BuildController {
             double d = pl.getPos().squaredDistanceTo(Vec3d.ofCenter(e.getKey()));
             if (d < best) { best = d; closest = e.getKey(); }
         }
-        if (closest != null) walkToward(pl, closest);
-        wait = 0;
+        if (closest == null) { wait = 0; return; }
+        if (Config.INSTANCE.autoMove) {
+            walkToward(pl, closest);
+            wait = 0;
+        } else {
+            status = "Move closer (" + queue.size() + " left)";
+            wait = 10;
+        }
     }
 
     /** Turns the player to look directly at a point — vanilla placement logic (stair/log/repeater orientation etc.) reads this. */

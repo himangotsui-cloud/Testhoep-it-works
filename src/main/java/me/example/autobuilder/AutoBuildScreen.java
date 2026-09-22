@@ -18,20 +18,25 @@ public class AutoBuildScreen extends Screen {
     private static final String[] MODES = { "AUTO", "CREATIVE", "SHOP" };
     private static final int[] ROTATIONS = { 0, 90, 180, 270 };
 
+    // theme — dark panel, cyan accent, Meteor-Client-ish click-GUI
+    private static final int BG = 0xE6141414, PANEL_BORDER = 0xFF2B2B2B, ACCENT = 0xFF3FD6C6, ACCENT_DIM = 0x553FD6C6;
+    private static final int TEXT = 0xE6DFDFDF, TEXT_DIM = 0xFF8A8A8A;
+    private static final int PANEL_W = 300, PANEL_H = 250, SIDEBAR_W = 72;
+
     private final BlockPos origin;
     private boolean settings = false;
     private TextFieldWidget cmdField;
     private List<String> files = List.of();
     private int idx = 0;
 
-    private ButtonWidget modeBtn, strictBtn, soundBtn, speedLabelBtn, layerBtn, rotBtn;
+    private ButtonWidget modeBtn, strictBtn, soundBtn, speedLabelBtn, layerBtn, rotBtn, moveBtn;
+    private int panelX, panelY;
 
     public AutoBuildScreen(BlockPos origin) {
         super(Text.literal("AutoBuilder"));
         this.origin = origin;
     }
 
-    /** All .schem files in .minecraft/schematics, newest first. */
     static List<String> listSchematics() {
         Path dir = FabricLoader.getInstance().getGameDir().resolve("schematics");
         try { Files.createDirectories(dir); } catch (Exception ignored) {}
@@ -45,26 +50,6 @@ public class AutoBuildScreen extends Screen {
         }
     }
 
-    /** Button that reports right-clicks to a separate handler. */
-    private static class RightClickButton extends ButtonWidget {
-        private final Runnable onRight;
-
-        RightClickButton(int x, int y, int w, int h, Text t, PressAction left, Runnable right) {
-            super(x, y, w, h, t, left, DEFAULT_NARRATION_SUPPLIER);
-            this.onRight = right;
-        }
-
-        @Override
-        public boolean mouseClicked(double mx, double my, int button) {
-            if (button == 1 && active && visible && isMouseOver(mx, my)) {
-                playDownSound(MinecraftClient.getInstance().getSoundManager());
-                onRight.run();
-                return true;
-            }
-            return super.mouseClicked(mx, my, button);
-        }
-    }
-
     private void select(int newIdx) {
         if (files.isEmpty()) return;
         idx = Math.floorMod(newIdx, files.size());
@@ -73,174 +58,185 @@ public class AutoBuildScreen extends Screen {
 
     private void refresh() {
         files = listSchematics();
-        idx = 0; // always default to the newest file — no manual picking needed for the common case
+        idx = 0;
         if (!files.isEmpty()) Config.INSTANCE.schematic = files.get(idx);
+    }
+
+    /** Small tinted button used for the sidebar tabs and the mini +/- controls. */
+    private ButtonWidget tinted(Text text, ButtonWidget.PressAction action, int x, int y, int w, int h) {
+        return ButtonWidget.builder(text, action).dimensions(x, y, w, h).build();
     }
 
     @Override
     protected void init() {
-        int cx = width / 2, cy = height / 2;
+        panelX = (width - PANEL_W) / 2;
+        panelY = (height - PANEL_H) / 2;
+        int px = panelX + SIDEBAR_W + 14; // content column left edge
+        int pw = PANEL_W - SIDEBAR_W - 28;
 
         if (BuildController.running()) {
-            // a build is active — offer Pause/Resume + Cancel instead of the picker
             boolean paused = BuildController.paused();
-            addDrawableChild(ButtonWidget.builder(Text.literal(paused ? "Resume" : "Pause"), b -> {
+            int y = panelY + 90;
+            addDrawableChild(tinted(Text.literal(paused ? "\u25b6 Resume" : "\u23f8 Pause"), b -> {
                 if (paused) BuildController.resume(); else BuildController.pause();
                 close();
-            }).dimensions(cx - 75, cy, 72, 20).build());
-            addDrawableChild(ButtonWidget.builder(Text.literal("Cancel"), b -> {
+            }, px, y, pw, 20));
+            addDrawableChild(tinted(Text.literal("\u2716 Cancel"), b -> {
                 BuildController.stop();
                 close();
-            }).dimensions(cx + 3, cy, 72, 20).build());
+            }, px, y + 26, pw, 20));
             return;
         }
 
+        // sidebar tabs
+        addDrawableChild(tinted(Text.literal("Build"), b -> { settings = false; clearAndInit(); },
+                panelX + 8, panelY + 34, SIDEBAR_W - 16, 20));
+        addDrawableChild(tinted(Text.literal("Settings"), b -> { settings = true; clearAndInit(); },
+                panelX + 8, panelY + 58, SIDEBAR_W - 16, 20));
+
         if (!settings) {
             refresh();
+            int y = panelY + 34;
 
-            addDrawableChild(ButtonWidget.builder(Text.literal("<"), b -> select(idx - 1))
-                    .dimensions(cx - 110, cy - 30, 20, 20).build());
-            addDrawableChild(ButtonWidget.builder(Text.literal(">"), b -> select(idx + 1))
-                    .dimensions(cx + 90, cy - 30, 20, 20).build());
-            addDrawableChild(ButtonWidget.builder(Text.literal("\u27f3"), b -> { refresh(); clearAndInit(); })
-                    .dimensions(cx + 60, cy - 52, 20, 20).tooltip(net.minecraft.client.gui.tooltip.Tooltip.of(
-                            Text.literal("Rescan schematics folder"))).build());
-            addDrawableChild(ButtonWidget.builder(Text.literal("Materials"), b -> {
+            addDrawableChild(tinted(Text.literal("Materials"), b -> {
                 if (!files.isEmpty()) BuildController.showMaterials(origin, Config.INSTANCE.schematic);
-            }).dimensions(cx - 110, cy - 52, 70, 20).tooltip(net.minecraft.client.gui.tooltip.Tooltip.of(
-                    Text.literal("List what's needed in chat"))).build());
+            }, px, y, pw - 24, 20));
+            addDrawableChild(tinted(Text.literal("\u27f3"), b -> { refresh(); clearAndInit(); },
+                    px + pw - 20, y, 20, 20));
+            y += 26;
 
-            Text label = Text.literal("Auto Build");
-            addDrawableChild(new RightClickButton(cx - 75, cy, 150, 20, label, b -> {
-                if (files.isEmpty()) {
-                    BuildController.status = "No .schem files in the schematics folder";
-                    return;
-                }
+            addDrawableChild(tinted(Text.literal("<"), b -> { select(idx - 1); clearAndInit(); }, px, y, 20, 20));
+            addDrawableChild(tinted(Text.literal(">"), b -> { select(idx + 1); clearAndInit(); }, px + pw - 20, y, 20, 20));
+            y += 68; // leaves room for the two text lines drawn in render() below the arrows
+
+            addDrawableChild(tinted(Text.literal("\u25b6 Auto Build"), b -> {
+                if (files.isEmpty()) { BuildController.status = "No .schem files in the schematics folder"; return; }
                 Config.INSTANCE.save();
                 BuildController.start(origin);
                 close();
-            }, () -> {
-                settings = true;
-                clearAndInit();
-            }));
+            }, px, y, pw, 22));
         } else {
-            int row = cy - 46;
+            int y = panelY + 36;
 
-            cmdField = new TextFieldWidget(textRenderer, cx - 100, row, 200, 20, Text.literal("Shop command"));
+            cmdField = new TextFieldWidget(textRenderer, px, y, pw, 20, Text.literal("Shop command"));
             cmdField.setMaxLength(100);
             cmdField.setText(Config.INSTANCE.shopCommand);
             addDrawableChild(cmdField);
-            row += 26;
+            y += 25;
 
-            modeBtn = ButtonWidget.builder(modeText(), b -> {
+            modeBtn = tinted(modeText(), b -> {
                 int i = java.util.Arrays.asList(MODES).indexOf(Config.INSTANCE.mode);
                 Config.INSTANCE.mode = MODES[(i + 1) % MODES.length];
                 modeBtn.setMessage(modeText());
-            }).dimensions(cx - 100, row, 200, 20).build();
+            }, px, y, pw, 18);
             addDrawableChild(modeBtn);
-            row += 24;
+            y += 21;
 
-            strictBtn = ButtonWidget.builder(strictText(), b -> {
+            moveBtn = tinted(moveText(), b -> {
+                Config.INSTANCE.autoMove = !Config.INSTANCE.autoMove;
+                moveBtn.setMessage(moveText());
+            }, px, y, pw, 18);
+            addDrawableChild(moveBtn);
+            y += 21;
+
+            int half = (pw - 4) / 2;
+            strictBtn = tinted(strictText(), b -> {
                 Config.INSTANCE.strictMode = !Config.INSTANCE.strictMode;
                 strictBtn.setMessage(strictText());
-            }).dimensions(cx - 100, row, 96, 20).build();
+            }, px, y, half, 18);
             addDrawableChild(strictBtn);
-
-            soundBtn = ButtonWidget.builder(soundText(), b -> {
+            soundBtn = tinted(soundText(), b -> {
                 Config.INSTANCE.soundOnComplete = !Config.INSTANCE.soundOnComplete;
                 soundBtn.setMessage(soundText());
-            }).dimensions(cx + 4, row, 96, 20).build();
+            }, px + half + 4, y, half, 18);
             addDrawableChild(soundBtn);
-            row += 24;
+            y += 21;
 
-            addDrawableChild(ButtonWidget.builder(Text.literal("-"), b -> {
-                Config.INSTANCE.speed = Math.max(1, Config.INSTANCE.speed - 1);
-                speedLabelBtn.setMessage(speedText());
-            }).dimensions(cx - 100, row, 20, 20).build());
-            speedLabelBtn = ButtonWidget.builder(speedText(), b -> {}).dimensions(cx - 76, row, 152, 20).build();
-            speedLabelBtn.active = false;
-            addDrawableChild(speedLabelBtn);
-            addDrawableChild(ButtonWidget.builder(Text.literal("+"), b -> {
-                Config.INSTANCE.speed = Math.min(5, Config.INSTANCE.speed + 1);
-                speedLabelBtn.setMessage(speedText());
-            }).dimensions(cx + 80, row, 20, 20).build());
-            row += 24;
-
-            layerBtn = ButtonWidget.builder(layerText(), b -> {
+            layerBtn = tinted(layerText(), b -> {
                 Config.INSTANCE.layerByLayer = !Config.INSTANCE.layerByLayer;
                 layerBtn.setMessage(layerText());
-            }).dimensions(cx - 100, row, 96, 20).build();
+            }, px, y, half, 18);
             addDrawableChild(layerBtn);
-
-            rotBtn = ButtonWidget.builder(rotText(), b -> {
+            rotBtn = tinted(rotText(), b -> {
                 int i = java.util.Arrays.asList(0, 90, 180, 270).indexOf(Config.INSTANCE.rotation);
                 Config.INSTANCE.rotation = ROTATIONS[(i + 1) % ROTATIONS.length];
                 rotBtn.setMessage(rotText());
-            }).dimensions(cx + 4, row, 96, 20).build();
+            }, px + half + 4, y, half, 18);
             addDrawableChild(rotBtn);
-            row += 30;
+            y += 21;
 
-            addDrawableChild(ButtonWidget.builder(Text.literal("Save"), b -> {
+            addDrawableChild(tinted(Text.literal("-"), b -> {
+                Config.INSTANCE.speed = Math.max(1, Config.INSTANCE.speed - 1);
+                speedLabelBtn.setMessage(speedText());
+            }, px, y, 18, 18));
+            speedLabelBtn = tinted(speedText(), b -> {}, px + 21, y, pw - 42, 18);
+            speedLabelBtn.active = false;
+            addDrawableChild(speedLabelBtn);
+            addDrawableChild(tinted(Text.literal("+"), b -> {
+                Config.INSTANCE.speed = Math.min(5, Config.INSTANCE.speed + 1);
+                speedLabelBtn.setMessage(speedText());
+            }, px + pw - 18, y, 18, 18));
+            y += 26;
+
+            addDrawableChild(tinted(Text.literal("Save"), b -> {
                 Config.INSTANCE.shopCommand = cmdField.getText().trim();
                 Config.INSTANCE.save();
                 settings = false;
                 clearAndInit();
-            }).dimensions(cx - 50, row, 100, 20).build());
+            }, px, y, pw, 20));
         }
     }
 
-    private Text modeText() {
-        return Text.literal("Mode: " + Config.INSTANCE.mode
-                + ("AUTO".equals(Config.INSTANCE.mode) ? " (auto-detects singleplayer creative)" : ""));
-    }
-
-    private Text strictText() {
-        return Text.literal("Strict: " + (Config.INSTANCE.strictMode ? "ON" : "OFF"));
-    }
-
-    private Text soundText() {
-        return Text.literal("Sound: " + (Config.INSTANCE.soundOnComplete ? "ON" : "OFF"));
-    }
-
-    private Text speedText() {
-        return Text.literal("Speed: " + Config.INSTANCE.speed + "/5");
-    }
-
-    private Text layerText() {
-        return Text.literal("Layers: " + (Config.INSTANCE.layerByLayer ? "ON" : "OFF"));
-    }
-
-    private Text rotText() {
-        return Text.literal("Rotate: " + Config.INSTANCE.rotation + "\u00b0");
-    }
+    private Text modeText() { return Text.literal("Mode: " + Config.INSTANCE.mode); }
+    private Text strictText() { return Text.literal("Strict: " + (Config.INSTANCE.strictMode ? "ON" : "OFF")); }
+    private Text soundText() { return Text.literal("Sound: " + (Config.INSTANCE.soundOnComplete ? "ON" : "OFF")); }
+    private Text speedText() { return Text.literal("Speed: " + Config.INSTANCE.speed + "/5"); }
+    private Text layerText() { return Text.literal("Layers: " + (Config.INSTANCE.layerByLayer ? "ON" : "OFF")); }
+    private Text rotText() { return Text.literal("Rotate: " + Config.INSTANCE.rotation + "\u00b0"); }
+    private Text moveText() { return Text.literal("Auto-move: " + (Config.INSTANCE.autoMove ? "ON" : "OFF")); }
 
     @Override
     public void render(DrawContext ctx, int mouseX, int mouseY, float delta) {
+        // dim the world behind the panel, then draw the panel itself
+        ctx.fill(0, 0, width, height, 0x66000000);
+        ctx.fill(panelX, panelY, panelX + PANEL_W, panelY + PANEL_H, BG);
+        ctx.drawBorder(panelX, panelY, PANEL_W, PANEL_H, PANEL_BORDER);
+        ctx.fill(panelX, panelY, panelX + PANEL_W, panelY + 22, ACCENT_DIM);
+        ctx.fill(panelX, panelY + 22, panelX + PANEL_W, panelY + 23, ACCENT);
+        ctx.drawText(textRenderer, Text.literal("AutoBuilder"), panelX + 8, panelY + 7, ACCENT, true);
+
+        if (!BuildController.running()) {
+            ctx.fill(panelX + SIDEBAR_W, panelY + 23, panelX + SIDEBAR_W + 1, panelY + PANEL_H, PANEL_BORDER);
+            int tabY = settings ? panelY + 58 : panelY + 34;
+            ctx.fill(panelX + 8, tabY, panelX + SIDEBAR_W - 8, tabY + 20, ACCENT_DIM);
+        }
+
         super.render(ctx, mouseX, mouseY, delta);
-        int cx = width / 2, cy = height / 2;
+
+        int px = panelX + SIDEBAR_W + 14;
+        int pw = PANEL_W - SIDEBAR_W - 28;
 
         if (BuildController.running()) {
-            ctx.drawCenteredTextWithShadow(textRenderer, Text.literal("AutoBuilder"), cx, cy - 40, 0xFFFFFF);
-            ctx.drawCenteredTextWithShadow(textRenderer, Text.literal(BuildController.status), cx, cy - 20, 0x55FF55);
+            ctx.drawCenteredTextWithShadow(textRenderer, Text.literal(BuildController.status), panelX + SIDEBAR_W + 14 + pw / 2, panelY + 42, TEXT);
+            int pct = BuildController.totalBlocks <= 0 ? 0 : (int) (100.0 * (BuildController.placedBlocks + BuildController.skippedBlocks) / BuildController.totalBlocks);
+            String eta = BuildController.etaString();
+            ctx.drawCenteredTextWithShadow(textRenderer,
+                    Text.literal(pct + "%  (" + BuildController.placedBlocks + "/" + BuildController.totalBlocks + ")" + (eta.isEmpty() ? "" : "  " + eta + " left")),
+                    panelX + SIDEBAR_W + 14 + pw / 2, panelY + 62, TEXT_DIM);
             return;
         }
 
         if (!settings) {
-            ctx.drawCenteredTextWithShadow(textRenderer, Text.literal("AutoBuilder"), cx, cy - 74, 0xFFFFFF);
-            String name = files.isEmpty() ? "No .schem files found" : files.get(idx) + "  (" + (idx + 1) + "/" + files.size() + ")";
-            ctx.drawCenteredTextWithShadow(textRenderer, Text.literal(name), cx, cy - 24, files.isEmpty() ? 0xFF5555 : 0xFFFF55);
-            String modeLine = "Mode: " + BuildController.resolvedModeLabel(MinecraftClient.getInstance())
-                    + "   Rotate: " + Config.INSTANCE.rotation + "\u00b0";
-            ctx.drawCenteredTextWithShadow(textRenderer,
-                    Text.literal("Left-click: start/stop   Right-click: settings"), cx, cy + 26, 0xAAAAAA);
-            ctx.drawCenteredTextWithShadow(textRenderer, Text.literal(modeLine), cx, cy + 40, 0x66CCFF);
-            ctx.drawCenteredTextWithShadow(textRenderer, Text.literal(BuildController.status), cx, cy + 54, 0x55FF55);
-            if (files.isEmpty()) {
-                ctx.drawCenteredTextWithShadow(textRenderer,
-                        Text.literal("Put your .schem file in .minecraft/schematics"), cx, cy + 68, 0xAAAAAA);
+            int y = panelY + 86;
+            String name = files.isEmpty() ? "No .schem files found" : files.get(idx);
+            ctx.drawCenteredTextWithShadow(textRenderer, Text.literal(name), px + pw / 2, y, files.isEmpty() ? 0xFFFF5555 : TEXT);
+            if (!files.isEmpty()) {
+                ctx.drawCenteredTextWithShadow(textRenderer, Text.literal("(" + (idx + 1) + "/" + files.size() + ")"), px + pw / 2, y + 11, TEXT_DIM);
             }
-        } else {
-            ctx.drawTextWithShadow(textRenderer, Text.literal("Shop command"), cx - 100, cy - 58, 0xFFFFFF);
+            ctx.drawCenteredTextWithShadow(textRenderer,
+                    Text.literal(BuildController.resolvedModeLabel(MinecraftClient.getInstance()) + "  \u00b7  Rotate " + Config.INSTANCE.rotation + "\u00b0"),
+                    px + pw / 2, y + 26, ACCENT);
+            ctx.drawCenteredTextWithShadow(textRenderer, Text.literal(BuildController.status), px + pw / 2, panelY + 158, TEXT_DIM);
         }
     }
 }
